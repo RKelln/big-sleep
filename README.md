@@ -155,6 +155,23 @@ Due to the class conditioned nature of the GAN, Big Sleep often steers off the m
 $ dream "a room with a view of the ocean" --save-best
 ```
 
+### Changes for the Sound Escapes concert
+
+This project was used in the [Sound Escapes](http://www.ryankelln.com/project/sound-escapes/) concert.
+
+There are some changes to the base project to make it easier to make short videos. This includes:
+* Automatically create putput directories
+* Changes to the filenames ued to make experimentation easier
+* An ugly hack to change the frequency of saving images such that the first 100 iterations are saved more frequently then reduced frequency until saving an image every 100 iterations. This makes reasonable animations at 30 fps that last around 3 seconds.
+   * Use the following to make videos from the output:
+```bash
+cat $(find output/path/frames -maxdepth 1 -name "*.png" | sort -V) | ffmpeg -framerate 30 -i - -preset veryslow -crf 18 high_quality_animation.mp4
+```
+* See example python scripts for generating bird animations used in the concert:
+   * `bird_musicians.py`
+   * `bird_quotes.py`
+
+
 ## Experimentation
 
 You can set the number of classes that you wish to restrict Big Sleep to use for the Big GAN with the `--max-classes` flag as follows (ex. 15 classes). This may lead to extra stability during training, at the cost of lost expressivity.

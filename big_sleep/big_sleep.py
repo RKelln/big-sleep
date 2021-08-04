@@ -224,6 +224,7 @@ class BigSleep(nn.Module):
             class_temperature = class_temperature,
             ema_decay = ema_decay
         )
+        
 
     def reset(self):
         self.model.init_latents()
@@ -318,6 +319,7 @@ class Imagine(nn.Module):
         ema_decay = 0.99,
         num_cutouts = 128,
         center_bias = False,
+        output_path= "."
     ):
         super().__init__()
 
@@ -362,7 +364,14 @@ class Imagine(nn.Module):
         self.current_best_score = 0
 
         self.open_folder = open_folder
-        self.total_image_updates = (self.epochs * self.iterations) / self.save_every
+        self.output_path = output_path
+        if self.append_seed:
+            self.output_path = Path(self.output_path, self.seed_suffix)
+        os.makedirs(self.output_path, exist_ok=True)
+        if self.save_progress:
+            os.makedirs(Path(self.output_path, 'frames'), exist_ok=True)
+        # HACK: iterations change per epoch
+        self.total_image_updates = self.total_iterations(epochs, iterations)
         self.encoded_texts = {
             "max": [],
             "min": []
@@ -372,9 +381,11 @@ class Imagine(nn.Module):
         # create starting encoding
         self.set_clip_encoding(text=text, img=img, encoding=encoding, text_min=text_min)
     
+        
+
     @property
     def seed_suffix(self):
-        return f'.{self.seed}' if self.append_seed and exists(self.seed) else ''
+        return f'{self.seed}' if self.append_seed and exists(self.seed) else ''
 
     def set_text(self, text):
         self.set_clip_encoding(text = text)
@@ -432,13 +443,33 @@ class Imagine(nn.Module):
             text_path = datetime.now().strftime("%y%m%d-%H%M%S-") + text_path
 
         self.text_path = text_path
-        self.filename = Path(f'./{text_path}{self.seed_suffix}.png')
+        self.filename = Path(self.output_path, f'{text_path}.{self.seed_suffix}.png')
         self.encode_max_and_min(text, img=img, encoding=encoding, text_min=text_min) # Tokenize and encode each prompt
 
     def reset(self):
         self.model.reset()
         self.model = self.model.cuda()
         self.optimizer = Adam(self.model.model.latents.parameters(), self.lr)
+
+    # hack to save more often when first starting
+    def get_save_every(self, epoch, i):
+        if epoch == 0:
+            if i < 100:
+                return max(1, i // 10)
+            else:
+                return 20
+        if epoch == 1:
+            return 25
+        return 100
+
+    def total_iterations(self, epochs, iterations):
+        iters = 0
+        for e in range(epochs):
+            for i in range(iterations):
+                save_every = self.get_save_every(e, i)
+                if (i + 1) % save_every == 0:
+                    iters += 1
+        return iters
 
     def train_step(self, epoch, i, pbar=None):
         total_loss = 0
@@ -452,8 +483,8 @@ class Imagine(nn.Module):
         self.optimizer.step()
         self.model.model.latents.update()
         self.optimizer.zero_grad()
-
-        if (i + 1) % self.save_every == 0:
+            
+        if (i + 1) % self.get_save_every(epoch, i) == 0:
             with torch.no_grad():
                 self.model.model.latents.eval()
                 out, losses = self.model(self.encoded_texts["max"], self.encoded_texts["min"])
@@ -461,20 +492,22 @@ class Imagine(nn.Module):
                 image = self.model.model()[best].cpu()
                 self.model.model.latents.train()
 
-                save_image(image, str(self.filename))
+                
                 if pbar is not None:
                     pbar.update(1)
+                    # save last
+                    if epoch == self.epochs - 1 and i == self.iterations - 1:
+                        save_image(image, str(self.filename))
                 else:
                     print(f'image updated at "./{str(self.filename)}"')
+                    save_image(image, str(self.filename))
 
                 if self.save_progress:
-                    total_iterations = epoch * self.iterations + i
-                    num = total_iterations // self.save_every
-                    save_image(image, Path(f'./{self.text_path}.{num}{self.seed_suffix}.png'))
+                    save_image(image, Path(self.output_path, 'frames', f'{pbar.last_print_n:04d}.png'))
 
                 if self.save_best and top_score.item() < self.current_best_score:
                     self.current_best_score = top_score.item()
-                    save_image(image, Path(f'./{self.text_path}{self.seed_suffix}.best.png'))
+                    save_image(image, Path(self.output_path, f'{self.text_path}.{self.seed_suffix}.best.png'))
 
         return out, total_loss
 
